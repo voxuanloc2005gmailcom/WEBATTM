@@ -1,0 +1,20 @@
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+*.env.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Runtime/test
+*.log
+security/tests/*.tmp
+.env.bootstrap-test-backup
+
+# Local production material
+backups/
+nginx/certs/

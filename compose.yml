@@ -1,0 +1,166 @@
+name: techgear
+
+services:
+  nginx:
+    image: owasp/modsecurity-crs:4.25.1-nginx-202609180209
+    user: "root"
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-_}
+      PORT: "8080"
+      SSL_PORT: "8443"
+      NGINX_ALWAYS_TLS_REDIRECT: "off"
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_PORT_IN_REDIRECT: "off"
+      NGINX_WORKER_PROCESSES: "auto"
+      WORKER_CONNECTIONS: "1024"
+      CLIENT_BODY_TIMEOUT: "10s"
+      KEEPALIVE_TIMEOUT: "65s"
+      SERVER_TOKENS: "off"
+      SERVER_HEADER: ""
+      SSL_CERT_FILE: /etc/nginx/conf/server.crt
+      SSL_CERT_KEY_FILE: /etc/nginx/conf/server.key
+      SSL_PROTOCOLS: "TLSv1.2 TLSv1.3"
+      SSL_CIPHERS: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-CHACHA20-POLY1305"
+      SSL_OCSP_STAPLING: "off"
+      SSL_PREFER_CIPHERS: "off"
+      SSL_DH_BITS: "2048"
+      MODSEC_RULE_ENGINE: "On"
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+      MODSEC_AUDIT_LOG_FORMAT: "JSON"
+      MODSEC_AUDIT_LOG_TYPE: "Concurrent"
+      MODSEC_AUDIT_STORAGE_DIR: /var/log/modsecurity/audit/
+      MODSEC_RESP_BODY_MIMETYPE: "text/plain text/html text/xml application/json"
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      ANOMALY_OUTBOUND: "4"
+      SET_REAL_IP_FROM: "127.0.0.1"
+      REAL_IP_HEADER: "CF-Connecting-IP"
+      REAL_IP_RECURSIVE: "off"
+      PROXY_FORWARDED_PROTO: "$$scheme"
+      PROXY_FORWARDED_PORT: "$$server_port"
+    volumes:
+      - ./nginx/templates/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./nginx/templates/conf.d/default.conf.template:/etc/nginx/templates/conf.d/default.conf.template:ro
+      - ./nginx/modsecurity/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:ro
+      - ./nginx/modsecurity/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:ro
+      - nginx_logs:/var/log/nginx
+      - modsecurity_audit:/var/log/modsecurity/audit
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.30.0.2
+      frontend_net:
+      backend_net:
+    # The OWASP CRS image ships its own /healthz healthcheck.
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      frontend_net:
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: "5000"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-techgear_db}
+      DB_USER: ${APP_DB_USER:-techgear_app}
+      DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-tg_session}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      AES_KEY: ${AES_KEY:?Set AES_KEY in .env}
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
+      VNPAY_PAYMENT_URL: ${VNPAY_PAYMENT_URL:-https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-https://localhost:8443/api/payment/vnpay_return}
+      VNPAY_IPN_URL: ${VNPAY_IPN_URL:-}
+      VNPAY_FRONTEND_ORIGIN: ${VNPAY_FRONTEND_ORIGIN:-https://localhost:8443}
+      VNPAY_ORDER_TYPE: ${VNPAY_ORDER_TYPE:-other}
+      VNPAY_LOCALE: ${VNPAY_LOCALE:-vn}
+      VNPAY_TIMEZONE: ${VNPAY_TIMEZONE:-Asia/Ho_Chi_Minh}
+      VNPAY_EXPIRE_MINUTES: ${VNPAY_EXPIRE_MINUTES:-15}
+      TECHBOT_ENABLED: ${TECHBOT_ENABLED:-true}
+      TECHBOT_OLLAMA_URL: ${TECHBOT_OLLAMA_URL:-http://host.docker.internal:11434}
+      TECHBOT_MODEL: ${TECHBOT_MODEL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      backend_net:
+      db_net:
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-techgear_db}
+      POSTGRES_USER: ${POSTGRES_BOOTSTRAP_USER:-techgear_bootstrap}
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?Set POSTGRES_BOOTSTRAP_PASSWORD in .env}
+      OWNER_DB_USER: ${OWNER_DB_USER:-techgear_owner}
+      OWNER_DB_PASSWORD: ${OWNER_DB_PASSWORD:?Set OWNER_DB_PASSWORD in .env}
+      APP_DB_USER: ${APP_DB_USER:-techgear_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      # Only the shell hook belongs in /docker-entrypoint-initdb.d. The grant SQL is mounted elsewhere so the official image cannot execute it a second time without psql -v variables.
+      - ./database/init/01-create-roles.sh:/docker-entrypoint-initdb.d/01-create-roles.sh:ro
+      - ./database/sql:/sql:ro
+      - ./database/migrations:/migrations:ro
+      - ./database/seed:/seed:ro
+    networks:
+      db_net:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  edge:
+    name: techgear_edge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  frontend_net:
+    name: techgear_frontend
+  backend_net:
+    name: techgear_backend
+  db_net:
+    name: techgear_db
+    internal: true
+
+volumes:
+  postgres_data:
+  nginx_logs:
+  modsecurity_audit:

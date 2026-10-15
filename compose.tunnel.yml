@@ -1,0 +1,33 @@
+services:
+  backend:
+    environment:
+      COOKIE_SECURE: "true"
+
+  nginx:
+    environment:
+      # Tunnel is the only edge peer in this mode.
+      SET_REAL_IP_FROM: "172.30.0.3/32"
+      REAL_IP_HEADER: "CF-Connecting-IP"
+      REAL_IP_RECURSIVE: "off"
+      # Cloudflare terminates the public TLS connection before forwarding HTTP through the tunnel.
+      PROXY_FORWARDED_PROTO: "https"
+      PROXY_FORWARDED_PORT: "443"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.1
+    restart: unless-stopped
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    command: ["tunnel", "--no-autoupdate", "run"]
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.30.0.3
+    # No host ports: cloudflared reaches nginx only over the Docker edge network.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
