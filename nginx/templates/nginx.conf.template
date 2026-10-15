@@ -1,0 +1,46 @@
+load_module modules/ngx_http_modsecurity_module.so;
+
+user nginx;
+worker_processes ${NGINX_WORKER_PROCESSES};
+pid /tmp/nginx.pid;
+
+error_log /dev/stderr warn;
+
+events {
+    worker_connections ${WORKER_CONNECTIONS};
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    server_tokens ${SERVER_TOKENS};
+
+    client_body_timeout ${CLIENT_BODY_TIMEOUT};
+    keepalive_timeout ${KEEPALIVE_TIMEOUT};
+    client_max_body_size 10m;
+
+    # Assignment-required Nginx rate limits.
+    limit_req_zone $binary_remote_addr zone=global_limit:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=strict_limit:10m rate=1r/s;
+    limit_req_zone $binary_remote_addr zone=ai_limit:10m rate=5r/m;
+
+    # IMPORTANT: only a trusted proxy may rewrite $remote_addr.
+    set_real_ip_from ${SET_REAL_IP_FROM};
+    real_ip_header ${REAL_IP_HEADER};
+    real_ip_recursive ${REAL_IP_RECURSIVE};
+
+    # JSON access log used by the bootstrap tests to prove header trust boundaries.
+    log_format techgear_json escape=json
+      '{"time":"$time_iso8601",'
+      '"remote_addr":"$remote_addr",'
+      '"cf_connecting_ip":"$http_cf_connecting_ip",'
+      '"request":"$request",'
+      '"status":$status,'
+      '"host":"$host"}';
+    access_log /var/log/nginx/techgear-access.log techgear_json;
+    # Keep request logs visible in `docker compose logs nginx` for debugging.
+    access_log /dev/stdout techgear_json;
+
+    include /etc/nginx/conf.d/*.conf;
+}
